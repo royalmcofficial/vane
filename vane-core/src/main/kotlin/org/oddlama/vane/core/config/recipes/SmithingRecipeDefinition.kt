@@ -119,7 +119,10 @@ class SmithingRecipeDefinition(name: String?) : RecipeDefinition(name) {
     }
 
     /** Converts this definition into a Bukkit [SmithingTransformRecipe]. */
-    override fun toRecipe(baseKey: NamespacedKey?): Recipe {
+    override fun toRecipe(baseKey: NamespacedKey?): Recipe = toRecipe(baseKey, CustomItemRegistry.instance())
+
+    /** Builds this recipe with an explicit registry for isolated recipe matching tests. */
+    internal fun toRecipe(baseKey: NamespacedKey?, registry: CustomItemRegistry?): Recipe {
         val bk = baseKey ?: throw IllegalArgumentException("baseKey cannot be null")
         val baseDef = base ?: throw IllegalArgumentException("Invalid smithing recipe: base must be set")
         val additionDef = addition ?: throw IllegalArgumentException("Invalid smithing recipe: addition must be set")
@@ -129,18 +132,16 @@ class SmithingRecipeDefinition(name: String?) : RecipeDefinition(name) {
             key(bk),
             ItemUtil.itemstackFromString(resultDef).first!!,
             MaterialChoice(Material.NETHERITE_UPGRADE_SMITHING_TEMPLATE),
-            identityChoice(baseDef) ?: recipeChoice(baseDef),
+            identityChoice(baseDef, registry) ?: recipeChoice(baseDef),
             recipeChoice(additionDef),
             copyNbt
         )
     }
 
     /** Matches registered custom bases by their Vane identifier while allowing mutable metadata. */
-    private fun identityChoice(definition: String): RecipeChoice? {
-        if (!copyNbt) return null
-
+    private fun identityChoice(definition: String, registry: CustomItemRegistry?): RecipeChoice? {
         val key = NamespacedKey.fromString(definition.trim()) ?: return null
-        val registry = CustomItemRegistry.instance() ?: return null
+        registry ?: return null
         val customItem = registry.get(key) ?: return null
         val exampleStack = customItem.newStack() ?: return null
 
