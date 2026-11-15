@@ -22,12 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
 
       # The jars carry the project version (and vane-core the matching resource pack URL),
       # so a tag that disagrees with build.gradle.kts would publish mislabeled artifacts.
@@ -74,15 +74,29 @@ jobs:
           pip install build
           python -m build --outdir ../../target/bridge
 
-      # A new tag gets a draft with generated notes to edit before publishing by hand. If a
-      # release already exists (draft or published), only its assets are replaced.
-      # Tags with a semver pre-release suffix (v1.23.0-beta.1) are marked as pre-releases, which
-      # also keeps them out of `releases/latest` and therefore out of vane's update notices.
+      # Create a draft first so incomplete builds can never publish a partial release.
+      # Tags with a semver pre-release suffix are kept out of releases/latest and update notices.
       - name: Upload to GitHub release
+        id: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
+          if is_draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
+            if [[ "$GITHUB_REPOSITORY" == "royalmcofficial/vane" && "$is_draft" != "true" ]]; then
+              echo "Release $TAG is already published. Skipping asset replacement."
+              echo "already_published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
             prerelease=()
             [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
             gh release create "$TAG" --draft --verify-tag --generate-notes --title "$TAG" "${prerelease[@]}"
           fi
           gh release upload "$TAG" --clobber target/vane-*-"$VERSION".jar target/all-plugins.zip target/barmc-"$VERSION".zip target/bridge/*
+
+      # Keep upstream releases as drafts. Publishing is enabled automatically on the RoyalMC fork.
+      - name: Publish release on fork
+        if: ${{ github.repository == 'royalmcofficial/vane' && steps.upload.outputs.already_published != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false

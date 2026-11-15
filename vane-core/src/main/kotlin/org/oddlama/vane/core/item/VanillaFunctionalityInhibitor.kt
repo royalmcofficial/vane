@@ -1,5 +1,6 @@
 package org.oddlama.vane.core.item
 
+import net.minecraft.core.component.DataComponents
 import org.bukkit.Keyed
 import org.bukkit.Material
 import org.bukkit.craftbukkit.inventory.CraftItemStack
@@ -98,7 +99,7 @@ class VanillaFunctionalityInhibitor(context: Context<Core?>?) : Listener<Core?>(
                 InhibitBehavior.USE_IN_VANILLA_RECIPE
             )
         ) {
-            event.inventory.result = null
+            event.result = null
         }
     }
 
@@ -107,14 +108,53 @@ class VanillaFunctionalityInhibitor(context: Context<Core?>?) : Listener<Core?>(
      */
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     fun onPrepareSmithingCopyNbt(event: PrepareSmithingEvent) {
-        val result = event.result ?: return
+        if (event.result == null) return
         val recipe = event.inventory.recipe
         if (recipe !is SmithingRecipe || !recipe.willCopyNbt()) return
 
-        val customItemResult = module!!.itemRegistry()?.get(recipe.result) ?: return
-        val inputComponents = CraftItemStack.asNMSCopy(event.inventory.inputEquipment).components
-        val nmsResult = CraftItemStack.asNMSCopy(recipe.result).also { it.applyComponents(inputComponents) }
-        event.result = customItemResult.convertExistingStack(CraftItemStack.asBukkitMirror(nmsResult))
+        val registry = module!!.itemRegistry() ?: return
+        val customItemResult = registry.get(recipe.result) ?: return
+        val inputStack = event.inventory.inputEquipment ?: return
+        val customItemInput = registry.get(inputStack)
+        val nmsInput = CraftItemStack.asNMSCopy(inputStack)
+        val nmsResult = CraftItemStack.asNMSCopy(recipe.result)
+
+        if (customItemInput == null || customItemInput.key() == customItemResult.key()) {
+            nmsResult.applyComponents(nmsInput.components)
+        } else {
+            // A different custom-item tier owns its material, attributes, model and item name.
+            // Copy mutable properties from the base without bringing along those tier defaults.
+            val inputComponents = nmsInput.componentsPatch.forget { component ->
+                component == DataComponents.ATTRIBUTE_MODIFIERS ||
+                    component == DataComponents.MAX_DAMAGE ||
+                    component == DataComponents.ITEM_NAME ||
+                    component == DataComponents.ITEM_MODEL ||
+                    component == DataComponents.CUSTOM_MODEL_DATA
+            }
+            nmsResult.applyComponents(inputComponents)
+
+            val inputMaxDamage = nmsInput.maxDamage
+            val resultMaxDamage = nmsResult.maxDamage
+            val inputDamage = nmsInput.damageValue
+            val targetDurability = customItemResult.durability()
+            if (targetDurability > 0 && inputMaxDamage > 0 && resultMaxDamage > 0) {
+                // Let the durability updater scale source damage into the configured target max.
+                nmsResult.set(DataComponents.MAX_DAMAGE, inputMaxDamage)
+            } else if (
+                targetDurability == 0 && inputMaxDamage > 0 && resultMaxDamage > 0 &&
+                inputDamage >= resultMaxDamage
+            ) {
+                val scaledDamage = DurabilityManager.scaleDamage(
+                    inputDamage,
+                    inputMaxDamage,
+                    resultMaxDamage
+                ).coerceIn(0, resultMaxDamage - 1)
+                nmsResult.damageValue = scaledDamage
+            }
+        }
+
+        val convertedStack = customItemResult.convertExistingStack(CraftItemStack.asBukkitMirror(nmsResult))
+        event.result = convertedStack
     }
 
     /**

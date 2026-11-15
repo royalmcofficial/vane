@@ -4,8 +4,10 @@ import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.Tag
 import org.bukkit.inventory.Recipe
+import org.bukkit.inventory.RecipeChoice
 import org.bukkit.inventory.RecipeChoice.MaterialChoice
 import org.bukkit.inventory.SmithingTransformRecipe
+import org.oddlama.vane.core.item.api.CustomItemRegistry
 import org.oddlama.vane.util.ItemUtil
 import org.oddlama.vane.util.LegacyKeys
 
@@ -127,9 +129,24 @@ class SmithingRecipeDefinition(name: String?) : RecipeDefinition(name) {
             key(bk),
             ItemUtil.itemstackFromString(resultDef).first!!,
             MaterialChoice(Material.NETHERITE_UPGRADE_SMITHING_TEMPLATE),
-            recipeChoice(baseDef),
+            identityChoice(baseDef) ?: recipeChoice(baseDef),
             recipeChoice(additionDef),
             copyNbt
+        )
+    }
+
+    /** Matches registered custom bases by their Vane identifier while allowing mutable metadata. */
+    private fun identityChoice(definition: String): RecipeChoice? {
+        if (!copyNbt) return null
+
+        val key = NamespacedKey.fromString(definition.trim()) ?: return null
+        val registry = CustomItemRegistry.instance() ?: return null
+        val customItem = registry.get(key) ?: return null
+        val exampleStack = customItem.newStack() ?: return null
+
+        return RecipeChoice.predicateChoice(
+            { input -> input.type == exampleStack.type && registry.get(input) === customItem },
+            exampleStack
         )
     }
 }
